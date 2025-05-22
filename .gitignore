@@ -1,1 +1,7 @@
 node_modules/
+
+# Ignore output directory
+output/
+output/temp_frames/
+output/*.json
+

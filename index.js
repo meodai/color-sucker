@@ -5,10 +5,11 @@ import path from 'path';
 import fs from 'fs';
 import { fileURLToPath } from 'url';
 import config from './sucker.config.js';
-import { readdir, mkdir, writeFile } from 'fs/promises';
+import { readdir, mkdir, writeFile, rm } from 'fs/promises';
 import gifFrames from 'gif-frames';
 import { pipeline } from 'stream';
 import { promisify } from 'util';
+import { createCanvas, loadImage } from 'canvas';
 
 const pipelineAsync = promisify(pipeline);
 
@@ -88,8 +89,17 @@ async function processImages() {
 
     // Read all image files from the folder
     const files = await readdir(imagesFolder);
-    const imageFiles = files.filter(file => file.match(/\.(jpg|jpeg|png|gif)$/i));
+    // Filter image files and exclude any PNG files that appear to be extracted gif frames
+    const imageFiles = files.filter(file => {
+      // Skip any PNG files with names that suggest they're from GIF frames
+      if (file.match(/_frame\d*\.png$/i)) {
+        return false;
+      }
+      // Include all other image files
+      return file.match(/\.(jpg|jpeg|png|gif)$/i);
+    });
 
+    const processedGifs = new Set(); // Keep track of processed GIFs
     const results = [];
 
     for (const imageFile of imageFiles) {
@@ -97,20 +107,82 @@ async function processImages() {
       console.log(`Processing image: ${imageFile}`);
 
       try {
-        let processedImagePath = imagePath;
-
-        // Handle .gif files by extracting the first frame
-        if (imageFile.toLowerCase().endsWith('.gif')) {
-          const frames = await gifFrames({ url: imagePath, frames: 0, outputType: 'png' });
-          const pngStream = frames[0].getImage();
-
-          // Save the extracted frame temporarily
-          const pngPath = path.join(imagesFolder, `${path.basename(imageFile, '.gif')}_frame.png`);
-          const writeStream = fs.createWriteStream(pngPath);
-          await pipelineAsync(pngStream, writeStream);
-          processedImagePath = pngPath;
+        // Skip this iteration if we've already processed this GIF
+        if (imageFile.toLowerCase().endsWith('.gif') && processedGifs.has(imageFile)) {
+          console.log(`Skipping already processed GIF: ${imageFile}`);
+          continue;
         }
 
+        let processedImagePath = imagePath;
+
+        // Handle .gif files by extracting frames
+        if (imageFile.toLowerCase().endsWith('.gif')) {
+          processedGifs.add(imageFile); // Mark this GIF as processed
+
+          const tempFramesDir = path.join(__dirname, 'output/temp_frames');
+          await mkdir(tempFramesDir, { recursive: true });
+
+          const frames = await gifFrames({
+            url: imagePath,
+            frames: config.maxGifFrames ? Array.from({ length: config.maxGifFrames }, (_, i) => i) : 'all',
+            outputType: 'png'
+          });
+
+          const framePaths = [];
+          for (let i = 0; i < frames.length; i++) {
+            const framePath = path.join(tempFramesDir, `${path.basename(imageFile, '.gif')}_frame_${i}.png`);
+            const writeStream = fs.createWriteStream(framePath);
+            await pipelineAsync(frames[i].getImage(), writeStream);
+            framePaths.push(framePath);
+          }
+
+          // Combine frames into a single image
+          const images = await Promise.all(framePaths.map(frame => loadImage(frame)));
+          const canvas = createCanvas(images[0].width * images.length, images[0].height);
+          const ctx = canvas.getContext('2d');
+
+          images.forEach((img, index) => {
+            ctx.drawImage(img, index * img.width, 0);
+          });
+
+          const combinedImagePath = path.join(tempFramesDir, `${path.basename(imageFile, '.gif')}_combined.png`);
+          
+          // Debugging: Log the number of frames and canvas dimensions
+          console.log(`Combining ${images.length} frames into a single image.`);
+          console.log(`Canvas dimensions: ${canvas.width}x${canvas.height}`);
+
+          // Ensure the temp_frames directory exists before writing the combined image
+          if (!fs.existsSync(tempFramesDir)) {
+            await mkdir(tempFramesDir, { recursive: true });
+          }
+
+          // Add error handling for the file stream pipeline
+          await new Promise((resolve, reject) => {
+            const stream = canvas.createPNGStream();
+            const out = fs.createWriteStream(combinedImagePath);
+            stream.pipe(out);
+            out.on('finish', resolve);
+            out.on('error', (err) => {
+              console.error(`Error writing combined image: ${err.message}`);
+              reject(err);
+            });
+          });
+
+          // Verify the file exists before proceeding
+          if (!fs.existsSync(combinedImagePath)) {
+            throw new Error(`Failed to create combined image: ${combinedImagePath}`);
+          }
+
+          processedImagePath = combinedImagePath;
+          
+          // Clean up only the individual frame files, keep the combined image for now
+          for (const framePath of framePaths) {
+            fs.unlinkSync(framePath);
+          }
+        }
+
+        // Extract the palette
+        console.log(`Extracting palette from: ${processedImagePath}`);
         const palette = await extractPalette({
           imagePath: processedImagePath,
           paletteSize: config.paletteSize
@@ -124,10 +196,24 @@ async function processImages() {
         console.log('\nExtracted palette:');
         colorBlocks.forEach(block => console.log(block));
 
+        // For the output JSON, use the original filename (especially for GIFs)
         results.push({
-          imageName: imageFile,
+          imageName: imageFile, // This is already correct because imageFile still refers to the original file
           colors: palette
         });
+        
+        // Now it's safe to clean up the temp directory if this was a GIF
+        if (imageFile.toLowerCase().endsWith('.gif')) {
+          try {
+            const tempFramesDir = path.join(__dirname, 'output/temp_frames');
+            if (fs.existsSync(tempFramesDir)) {
+              await fs.promises.rm(tempFramesDir, { recursive: true, force: true });
+              console.log(`Cleaned up temporary directory: ${tempFramesDir}`);
+            }
+          } catch (cleanupErr) {
+            console.error(`Error cleaning up temp directory: ${cleanupErr.message}`);
+          }
+        }
       } catch (err) {
         console.error(`Failed to process image ${imageFile}:`, err);
       }
