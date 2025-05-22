@@ -10,6 +10,13 @@ Will extract color palettes from images in the current directory and save them t
 npx color-sucker
 ```
 
+name colors and convert them to multile formats:
+
+```bash
+npx color-sucker && npx palette-aldente ./output/palettes.json --formats name,rgb,hsl --namelist bestOf 
+```
+
+
 ## Features
 
 - Extracts color palettes from images.
