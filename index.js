@@ -296,6 +296,21 @@ async function example() {
 let userConfigPath = path.join(process.cwd(), 'sucker.config.js');
 let config;
 
+// Parse command line arguments for --colors or -c
+const args = process.argv.slice(2);
+let cliPaletteSize = null;
+const colorsIndex = args.findIndex(arg => arg === '--colors' || arg === '-c');
+
+if (colorsIndex !== -1 && args[colorsIndex + 1]) {
+  const numColors = parseInt(args[colorsIndex + 1], 10);
+  if (!isNaN(numColors) && numColors > 0) {
+    cliPaletteSize = numColors;
+    console.log(`CLI override: paletteSize set to ${cliPaletteSize}`);
+  } else {
+    console.warn(`Warning: Invalid value provided for --colors. Using config or default paletteSize.`);
+  }
+}
+
 if (existsSync(userConfigPath)) {
   console.log(`Using user-provided config from: ${userConfigPath}`);
   config = await import(userConfigPath);
@@ -312,6 +327,11 @@ if (existsSync(userConfigPath)) {
   // Override outputJson to be in current working directory's 'output/palettes.json'
   config.outputJson = path.join(process.cwd(), 'output', 'palettes.json');
   console.log(`  Defaulting outputJson to: ${config.outputJson}`);
+}
+
+// Override paletteSize if provided via CLI
+if (cliPaletteSize !== null) {
+  config.paletteSize = cliPaletteSize;
 }
 
 // Update paths in config to be relative to the user's directory

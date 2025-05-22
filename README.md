@@ -65,9 +65,19 @@ You can run Color Sucker directly in any directory using `npx`:
 npx color-sucker
 ```
 
+To specify the number of colors to extract, use the `--colors` or `-c` flag:
+
+```bash
+npx color-sucker --colors 10
+# or
+npx color-sucker -c 3
+```
+
+This will override the `paletteSize` defined in any `sucker.config.js` or the default value.
+
 **Behavior with `npx`:**
 
-- **With `sucker.config.js`:** If a `sucker.config.js` file is present in the directory where you run `npx color-sucker`, that configuration will be used.
+- **With `sucker.config.js`:** If a `sucker.config.js` file is present in the directory where you run `npx color-sucker`, that configuration will be used (unless overridden by CLI flags like `--colors`).
 - **Without `sucker.config.js`:** If no `sucker.config.js` is found in the current directory:
   - The script will look for images in the current directory (`.` or `process.cwd()`).
   - The output JSON file (`palettes.json`) will be saved to an `output` folder created within the current directory (`./output/palettes.json`).
