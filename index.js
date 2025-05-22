@@ -4,13 +4,13 @@ import { Worker } from 'worker_threads';
 import path from 'path';
 import fs from 'fs';
 import { fileURLToPath } from 'url';
-import config from './sucker.config.js';
 import { readdir, mkdir, writeFile, rm } from 'fs/promises';
 import gifFrames from 'gif-frames';
 import { pipeline } from 'stream';
 import { promisify } from 'util';
 import { createCanvas, loadImage } from 'canvas';
 import PQueue from 'p-queue';
+import { existsSync } from 'fs';
 
 const pipelineAsync = promisify(pipeline);
 
@@ -80,9 +80,36 @@ function extractPalette(options = {}) {
 
 // Process images from the configured folder, extract palettes, and save to JSON
 async function processImages() {
+  // Add detailed logs to track execution flow
+  console.log('Starting processImages function...');
+
+  // Log the configuration values
+  console.log('Configuration:', config);
+
+  // Log the imagesFolder path
+  console.log(`Images folder resolved to: ${path.join(__dirname, config.imagesFolder)}`);
+
+  // Log the output JSON path
+  console.log(`Output JSON path resolved to: ${path.join(__dirname, config.outputJson)}`);
+
+  // Add a log before reading files
+  console.log('Reading files from images folder...');
+
+  // Log the output JSON path and ensure the directory exists
+  const outputDir = path.dirname(config.outputJson);
+  if (!fs.existsSync(outputDir)) {
+    await mkdir(outputDir, { recursive: true });
+    console.log(`Created output directory: ${outputDir}`);
+  }
+
   try {
-    const imagesFolder = path.join(__dirname, config.imagesFolder);
-    const outputJsonPath = path.join(__dirname, config.outputJson);
+    // Use config paths directly without additional resolution if they are already absolute
+    const imagesFolder = config.imagesFolder;
+    const outputJsonPath = config.outputJson;
+
+    // Log the resolved paths
+    console.log(`Images folder: ${imagesFolder}`);
+    console.log(`Output JSON path: ${outputJsonPath}`);
 
     // Ensure the output directory exists
     const outputDir = path.dirname(outputJsonPath);
@@ -100,6 +127,12 @@ async function processImages() {
       return file.match(/\.(jpg|jpeg|png|gif)$/i);
     });
 
+    // Log the imagesFolder path
+    console.log(`Images folder: ${imagesFolder}`);
+
+    // Log the list of files found in the imagesFolder
+    console.log('Files found in images folder:', files);
+
     const processedGifs = new Set(); // Keep track of processed GIFs
     const results = [];
 
@@ -110,6 +143,7 @@ async function processImages() {
     await Promise.all(imageFiles.map(imageFile => {
       return queue.add(async () => {
         const imagePath = path.join(imagesFolder, imageFile);
+        // Add a log before processing each image
         console.log(`Processing image: ${imageFile}`);
 
         try {
@@ -223,11 +257,17 @@ async function processImages() {
         } catch (err) {
           console.error(`Failed to process image ${imageFile}:`, err);
         }
+        // Add a log after processing each image
+        console.log(`Finished processing image: ${imageFile}`);
       });
     }));
     
+    // Add a log before writing the output JSON
+    console.log('Writing results to output JSON...');
     // Write results to the output JSON file
     await writeFile(outputJsonPath, JSON.stringify(results, null, 2));
+    // Add a log after writing the output JSON
+    console.log('Results successfully written to output JSON.');
     console.log(`Palettes saved to ${outputJsonPath}`);
   } catch (err) {
     console.error('Error processing images:', err);
@@ -252,16 +292,73 @@ async function example() {
   }
 }
 
+// Dynamically load the user's config if it exists, otherwise use the default config
+let userConfigPath = path.join(process.cwd(), 'sucker.config.js');
+let config;
+
+if (existsSync(userConfigPath)) {
+  console.log(`Using user-provided config from: ${userConfigPath}`);
+  config = await import(userConfigPath);
+  config = config.default || config; // Handle ES module default export
+} else {
+  console.log('No user config found. Loading defaults and adjusting paths for current directory.');
+  const defaultConfigModule = await import('./sucker.config.js');
+  config = { ...defaultConfigModule.default }; // Make a copy to preserve original defaults
+
+  // Override imagesFolder to current working directory
+  config.imagesFolder = process.cwd();
+  console.log(`  Defaulting imagesFolder to current working directory: ${config.imagesFolder}`);
+
+  // Override outputJson to be in current working directory's 'output/palettes.json'
+  config.outputJson = path.join(process.cwd(), 'output', 'palettes.json');
+  console.log(`  Defaulting outputJson to: ${config.outputJson}`);
+}
+
+// Update paths in config to be relative to the user's directory
+// Ensure paths are only resolved if they are not already absolute
+config.imagesFolder = path.isAbsolute(config.imagesFolder)
+  ? config.imagesFolder
+  : path.resolve(process.cwd(), config.imagesFolder || '.');
+
+config.outputJson = path.isAbsolute(config.outputJson)
+  ? config.outputJson
+  : path.resolve(process.cwd(), config.outputJson || 'output/palettes.json');
+
 // Dynamically set the imagesFolder to the current working directory if running with npx
 if (process.cwd() !== __dirname) {
   config.imagesFolder = process.cwd();
   console.log(`Using current working directory as images folder: ${config.imagesFolder}`);
 }
 
+// Add a log to confirm the script is running
+console.log('Color Sucker script started.');
+
+let mainScriptPath;
+try {
+  // Resolve process.argv[1] to its canonical path, resolving symlinks
+  mainScriptPath = fs.realpathSync(process.argv[1]);
+} catch (e) {
+  // Fallback if realpathSync fails (e.g., path doesn't exist, though unlikely for argv[1])
+  mainScriptPath = path.resolve(process.argv[1]);
+}
+
+// Convert import.meta.url to a file system path
+const modulePath = fileURLToPath(import.meta.url);
+
+const isMain = modulePath === mainScriptPath;
+
+// Ensure processImages is executed when the script is run directly
+if (isMain) {
+  (async () => {
+    try {
+      console.log('Executing processImages...');
+      await processImages();
+      console.log('processImages completed successfully.');
+    } catch (err) {
+      console.error('Error during processImages execution:', err);
+    }
+  })();
+}
+
 // Export the function for use in other modules
 export { extractPalette };
-
-// In ES modules, the equivalent condition for the main module is:
-if (import.meta.url === `file://${process.argv[1]}`) {
-  processImages();
-}
