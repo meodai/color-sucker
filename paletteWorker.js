@@ -5,7 +5,6 @@ import { fileURLToPath } from 'url';
 import { createCanvas, Image } from 'canvas';
 import PaletteExtractor from './libs/art-palette/palette-extraction/src/palette_extractor.js';
 
-// Get directory name correctly in ESM
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
@@ -21,10 +20,8 @@ parentPort.on('message', async (data) => {
       throw new Error('No image data provided');
     }
 
-    // Create an image and process it
     const img = new Image();
 
-    // Wait for the image to load
     const imageLoadPromise = new Promise((resolve, reject) => {
       img.onload = () => resolve();
       img.onerror = (err) => reject(new Error('Failed to load image'));
@@ -33,22 +30,17 @@ parentPort.on('message', async (data) => {
 
     await imageLoadPromise;
 
-    // Now we can safely use the image dimensions
     const canvas = createCanvas(img.width, img.height);
     const ctx = canvas.getContext('2d');
 
-    // Draw the image to canvas
     ctx.drawImage(img, 0, 0);
 
-    // Get image data
     const imageData = ctx.getImageData(0, 0, img.width, img.height);
 
-    // Extract palette using the palette extractor
     const paletteSize = data.paletteSize || 5;
     const extractor = new PaletteExtractor();
     const palette = extractor.processImageData(imageData.data, paletteSize);
 
-    // Send result back to main thread
     parentPort.postMessage({
       success: true,
       palette: palette,
@@ -65,5 +57,4 @@ parentPort.on('message', async (data) => {
   }
 });
 
-// Notify that the worker is ready
 parentPort.postMessage({ ready: true });
