@@ -14,7 +14,6 @@ import { existsSync } from 'fs';
 
 const pipelineAsync = promisify(pipeline);
 
-// Get directory name correctly in ESM
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
@@ -83,60 +82,44 @@ async function processImages() {
   // Add detailed logs to track execution flow
   console.log('Starting processImages function...');
 
-  // Log the configuration values
   console.log('Configuration:', config);
 
-  // Determine the absolute output folder path
   const absoluteOutputFolder = path.resolve(process.cwd(), config.outputFolder);
   console.log(`Output folder resolved to: ${absoluteOutputFolder}`);
 
-  // Determine the absolute output JSON path
   const absoluteOutputJsonPath = path.join(absoluteOutputFolder, config.outputJson);
   console.log(`Output JSON path resolved to: ${absoluteOutputJsonPath}`);
 
-  // Ensure the output directory exists
   if (!fs.existsSync(absoluteOutputFolder)) {
     await mkdir(absoluteOutputFolder, { recursive: true });
     console.log(`Created output directory: ${absoluteOutputFolder}`);
   }
 
   try {
-    // Use config paths directly without additional resolution if they are already absolute
-    const imagesFolder = config.imagesFolder; // This is already resolved to an absolute path
+    const imagesFolder = config.imagesFolder;
 
-    // Log the resolved paths
     console.log(`Images folder: ${imagesFolder}`);
     console.log(`Output JSON path: ${absoluteOutputJsonPath}`);
 
-    // Read all image files from the folder
     const files = await readdir(imagesFolder);
-    // Filter image files and exclude any PNG files that appear to be extracted gif frames
     const imageFiles = files.filter(file => {
-      // Skip any PNG files with names that suggest they're from GIF frames
       if (file.match(/_frame\d*\.png$/i)) {
         return false;
       }
-      // Include all other image files
       return file.match(/\.(jpg|jpeg|png|gif)$/i);
     });
 
-    // Log the imagesFolder path
     console.log(`Images folder: ${imagesFolder}`);
-
-    // Log the list of files found in the imagesFolder
     console.log('Files found in images folder:', files);
 
-    const processedGifs = new Set(); // Keep track of processed GIFs
+    const processedGifs = new Set();
     const results = [];
 
-    // Create a queue to limit the number of concurrent worker threads
     const queue = new PQueue({ concurrency: config.maxThreads });
 
-    // Process images in parallel using the queue
     await Promise.all(imageFiles.map(imageFile => {
       return queue.add(async () => {
         const imagePath = path.join(imagesFolder, imageFile);
-        // Add a log before processing each image
         console.log(`Processing image: ${imageFile}`);
 
         try {
@@ -180,11 +163,9 @@ async function processImages() {
 
             const combinedImagePath = path.join(tempFramesDir, `${path.basename(imageFile, '.gif')}_combined.png`);
             
-            // Debugging: Log the number of frames and canvas dimensions
             console.log(`Combining ${images.length} frames into a single image.`);
             console.log(`Canvas dimensions: ${canvas.width}x${canvas.height}`);
 
-            // Ensure the temp_frames directory exists before writing the combined image
             if (!fs.existsSync(tempFramesDir)) {
               await mkdir(tempFramesDir, { recursive: true });
             }
@@ -208,13 +189,11 @@ async function processImages() {
 
             processedImagePath = combinedImagePath;
             
-            // Clean up only the individual frame files, keep the combined image for now
             for (const framePath of framePaths) {
               fs.unlinkSync(framePath);
             }
           }
 
-          // Extract the palette
           console.log(`Extracting palette from: ${processedImagePath}`);
           const palette = await extractPalette({
             imagePath: processedImagePath,
@@ -229,13 +208,11 @@ async function processImages() {
           console.log('\nExtracted palette:');
           colorBlocks.forEach(block => console.log(block));
 
-          // For the output JSON, use the original filename (especially for GIFs)
           results.push({
-            imageName: imageFile, // This is already correct because imageFile still refers to the original file
+            imageName: imageFile,
             colors: palette
           });
           
-          // Now it's safe to clean up the temp directory if this was a GIF
           if (imageFile.toLowerCase().endsWith('.gif')) {
             try {
               const tempFramesDir = path.join(absoluteOutputFolder, 'temp_frames');
@@ -250,16 +227,12 @@ async function processImages() {
         } catch (err) {
           console.error(`Failed to process image ${imageFile}:`, err);
         }
-        // Add a log after processing each image
         console.log(`Finished processing image: ${imageFile}`);
       });
     }));
     
-    // Add a log before writing the output JSON
     console.log('Writing results to output JSON...');
-    // Write results to the output JSON file
     await writeFile(absoluteOutputJsonPath, JSON.stringify(results, null, 2));
-    // Add a log after writing the output JSON
     console.log('Results successfully written to output JSON.');
     console.log(`Palettes saved to ${absoluteOutputJsonPath}`);
 
@@ -374,10 +347,8 @@ if (existsSync(userConfigPath)) {
   const userConfigModule = await import(userConfigPath);
   config = { ...(userConfigModule.default || userConfigModule) }; // Handle ES module default export
 
-  // Resolve paths from user config relative to the user's project root (cwd)
   config.imagesFolder = path.resolve(process.cwd(), config.imagesFolder || '.');
   config.outputFolder = path.resolve(process.cwd(), config.outputFolder || './output');
-  // outputJson and outputHtml are filenames, not paths to resolve here
 
 } else {
   console.log('No user config found. Loading defaults and adjusting paths for current directory.');
@@ -388,10 +359,8 @@ if (existsSync(userConfigPath)) {
   config.imagesFolder = process.cwd();
   console.log(`  Defaulting imagesFolder to current working directory: ${config.imagesFolder}`);
 
-  // Override outputFolder to be in current working directory's 'output'
   config.outputFolder = path.join(process.cwd(), 'output');
   console.log(`  Defaulting outputFolder to: ${config.outputFolder}`);
-  // outputJson and outputHtml will use their default filenames within this outputFolder
 }
 
 // Override paletteSize if provided via CLI
@@ -399,14 +368,9 @@ if (cliPaletteSize !== null) {
   config.paletteSize = cliPaletteSize;
 }
 
-// Update paths in config to be relative to the user's directory
-// Ensure paths are only resolved if they are not already absolute
 config.imagesFolder = path.isAbsolute(config.imagesFolder)
   ? config.imagesFolder
   : path.resolve(process.cwd(), config.imagesFolder || '.');
-
-// We don't need to resolve outputJson path here as it's just a filename
-// that will be joined with the outputFolder in the processImages function
 
 // Dynamically set the imagesFolder to the current working directory if running with npx
 if (process.cwd() !== __dirname) {
@@ -438,9 +402,6 @@ if (isMain) {
       console.log('Executing processImages...');
       const results = await processImages(); // processImages should return results
       console.log('processImages completed successfully.');
-
-      // HTML report generation is now handled inside processImages()
-      // No need to call generateHtmlReport here
 
     } catch (err) {
       console.error('Error during processImages execution:', err);

@@ -9,17 +9,13 @@ import PaletteExtractor from './libs/art-palette/palette-extraction/src/palette_
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-// Process messages from the main thread
 parentPort.on('message', async (data) => {
   try {
-    // Check if we received an image path or buffer
     let imgBuffer;
 
     if (typeof data.imagePath === 'string') {
-      // Load image from path
       imgBuffer = fs.readFileSync(data.imagePath);
     } else if (data.imageBuffer) {
-      // Use provided image buffer
       imgBuffer = data.imageBuffer;
     } else {
       throw new Error('No image data provided');
