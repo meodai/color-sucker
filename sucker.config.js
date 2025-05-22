@@ -12,4 +12,7 @@ export default {
 
   // Maximum number of frames to extract from GIFs (set to null for all frames)
   maxGifFrames: 10,
+
+  // Maximum number of threads to use for parallel processing
+  maxThreads: 5,
 };

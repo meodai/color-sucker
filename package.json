@@ -19,7 +19,8 @@
   "description": "",
   "dependencies": {
     "canvas": "^3.1.0",
-    "gif-frames": "^1.0.1"
+    "gif-frames": "^1.0.1",
+    "p-queue": "^8.1.0"
   },
   "bin": {
     "color-sucker": "index.js"
