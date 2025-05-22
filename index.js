@@ -252,6 +252,12 @@ async function example() {
   }
 }
 
+// Dynamically set the imagesFolder to the current working directory if running with npx
+if (process.cwd() !== __dirname) {
+  config.imagesFolder = process.cwd();
+  console.log(`Using current working directory as images folder: ${config.imagesFolder}`);
+}
+
 // Export the function for use in other modules
 export { extractPalette };
 
