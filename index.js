@@ -86,34 +86,27 @@ async function processImages() {
   // Log the configuration values
   console.log('Configuration:', config);
 
-  // Log the imagesFolder path
-  console.log(`Images folder resolved to: ${path.join(__dirname, config.imagesFolder)}`);
+  // Determine the absolute output folder path
+  const absoluteOutputFolder = path.resolve(process.cwd(), config.outputFolder);
+  console.log(`Output folder resolved to: ${absoluteOutputFolder}`);
 
-  // Log the output JSON path
-  console.log(`Output JSON path resolved to: ${path.join(__dirname, config.outputJson)}`);
+  // Determine the absolute output JSON path
+  const absoluteOutputJsonPath = path.join(absoluteOutputFolder, config.outputJson);
+  console.log(`Output JSON path resolved to: ${absoluteOutputJsonPath}`);
 
-  // Add a log before reading files
-  console.log('Reading files from images folder...');
-
-  // Log the output JSON path and ensure the directory exists
-  const outputDir = path.dirname(config.outputJson);
-  if (!fs.existsSync(outputDir)) {
-    await mkdir(outputDir, { recursive: true });
-    console.log(`Created output directory: ${outputDir}`);
+  // Ensure the output directory exists
+  if (!fs.existsSync(absoluteOutputFolder)) {
+    await mkdir(absoluteOutputFolder, { recursive: true });
+    console.log(`Created output directory: ${absoluteOutputFolder}`);
   }
 
   try {
     // Use config paths directly without additional resolution if they are already absolute
-    const imagesFolder = config.imagesFolder;
-    const outputJsonPath = config.outputJson;
+    const imagesFolder = config.imagesFolder; // This is already resolved to an absolute path
 
     // Log the resolved paths
     console.log(`Images folder: ${imagesFolder}`);
-    console.log(`Output JSON path: ${outputJsonPath}`);
-
-    // Ensure the output directory exists
-    const outputDir = path.dirname(outputJsonPath);
-    await mkdir(outputDir, { recursive: true });
+    console.log(`Output JSON path: ${absoluteOutputJsonPath}`);
 
     // Read all image files from the folder
     const files = await readdir(imagesFolder);
@@ -159,7 +152,7 @@ async function processImages() {
           if (imageFile.toLowerCase().endsWith('.gif')) {
             processedGifs.add(imageFile); // Mark this GIF as processed
 
-            const tempFramesDir = path.join(__dirname, 'output/temp_frames');
+            const tempFramesDir = path.join(absoluteOutputFolder, 'temp_frames');
             await mkdir(tempFramesDir, { recursive: true });
 
             const frames = await gifFrames({
@@ -245,7 +238,7 @@ async function processImages() {
           // Now it's safe to clean up the temp directory if this was a GIF
           if (imageFile.toLowerCase().endsWith('.gif')) {
             try {
-              const tempFramesDir = path.join(__dirname, 'output/temp_frames');
+              const tempFramesDir = path.join(absoluteOutputFolder, 'temp_frames');
               if (fs.existsSync(tempFramesDir)) {
                 await fs.promises.rm(tempFramesDir, { recursive: true, force: true });
                 console.log(`Cleaned up temporary directory: ${tempFramesDir}`);
@@ -265,12 +258,66 @@ async function processImages() {
     // Add a log before writing the output JSON
     console.log('Writing results to output JSON...');
     // Write results to the output JSON file
-    await writeFile(outputJsonPath, JSON.stringify(results, null, 2));
+    await writeFile(absoluteOutputJsonPath, JSON.stringify(results, null, 2));
     // Add a log after writing the output JSON
     console.log('Results successfully written to output JSON.');
-    console.log(`Palettes saved to ${outputJsonPath}`);
+    console.log(`Palettes saved to ${absoluteOutputJsonPath}`);
+
+    // Conditional HTML report generation
+    if (reportType === 'html' || (config.outputHtml && typeof config.outputHtml === 'string')) {
+      await generateHtmlReport(results, absoluteOutputFolder, config.outputHtml || 'report.html');
+    }
+
+    return results; // Return the results array
   } catch (err) {
     console.error('Error processing images:', err);
+  }
+}
+
+async function generateHtmlReport(results, absoluteOutputFolder, reportFileName) {
+  const reportTemplatePath = path.join(__dirname, 'report.tpl.html');
+  const reportHtmlPath = path.join(absoluteOutputFolder, reportFileName);
+
+  try {
+    const template = await fs.promises.readFile(reportTemplatePath, 'utf-8');
+    let entriesHtml = '';
+
+    if (results.length === 0) {
+      entriesHtml = '<p class="no-results">No images processed or no palettes extracted.</p>';
+    } else {
+      for (const item of results) {
+        // Ensure image paths are relative to the output directory for the HTML report
+        // or use absolute paths if they are outside the project structure (e.g. when using npx in an arbitrary dir)
+        let imageDisplayPath = path.relative(path.dirname(reportHtmlPath), path.join(config.imagesFolder, item.imageName));
+        // If the image is outside the outputJsonPath's parent, use an absolute path with file:// protocol
+        if (imageDisplayPath.startsWith('..')) {
+            imageDisplayPath = `file://${path.resolve(config.imagesFolder, item.imageName)}`;
+        }
+
+        const colorsHtml = item.colors.map(color => 
+          `<div class="palette-color" style="background-color: ${color};" title="${color}">${color}</div>`
+        ).join('');
+        
+        entriesHtml += `
+          <div class="report-item">
+            <img src="${imageDisplayPath}" alt="${item.imageName}">
+            <div class="item-content">
+              <h2>${item.imageName}</h2>
+              <div class="palette">
+                ${colorsHtml}
+              </div>
+            </div>
+          </div>
+        `;
+      }
+    }
+
+    const outputHtml = template.replace('{{{IMAGE_PALETTE_ENTRIES}}}', entriesHtml);
+    await fs.promises.writeFile(reportHtmlPath, outputHtml);
+    console.log(`HTML report generated at ${reportHtmlPath}`);
+
+  } catch (err) {
+    console.error('Failed to generate HTML report:', err);
   }
 }
 
@@ -296,25 +343,42 @@ async function example() {
 let userConfigPath = path.join(process.cwd(), 'sucker.config.js');
 let config;
 
-// Parse command line arguments for --colors or -c
+// Parse command line arguments for --colors or -c and --report
 const args = process.argv.slice(2);
 let cliPaletteSize = null;
-const colorsIndex = args.findIndex(arg => arg === '--colors' || arg === '-c');
+let reportType = null;
 
-if (colorsIndex !== -1 && args[colorsIndex + 1]) {
-  const numColors = parseInt(args[colorsIndex + 1], 10);
-  if (!isNaN(numColors) && numColors > 0) {
-    cliPaletteSize = numColors;
-    console.log(`CLI override: paletteSize set to ${cliPaletteSize}`);
-  } else {
-    console.warn(`Warning: Invalid value provided for --colors. Using config or default paletteSize.`);
+for (let i = 0; i < args.length; i++) {
+  if ((args[i] === '--colors' || args[i] === '-c') && args[i + 1]) {
+    const numColors = parseInt(args[i + 1], 10);
+    if (!isNaN(numColors) && numColors > 0) {
+      cliPaletteSize = numColors;
+      console.log(`CLI override: paletteSize set to ${cliPaletteSize}`);
+    } else {
+      console.warn(`Warning: Invalid value provided for --colors. Using config or default paletteSize.`);
+    }
+    i++; // Skip next argument as it's the value for --colors
+  } else if (args[i] === '--report' && args[i + 1]) {
+    if (args[i + 1].toLowerCase() === 'html') {
+      reportType = 'html';
+      console.log('CLI option: HTML report will be generated.');
+    } else {
+      console.warn(`Warning: Invalid value provided for --report. Supported type: html.`);
+    }
+    i++; // Skip next argument as it's the value for --report
   }
 }
 
 if (existsSync(userConfigPath)) {
   console.log(`Using user-provided config from: ${userConfigPath}`);
-  config = await import(userConfigPath);
-  config = config.default || config; // Handle ES module default export
+  const userConfigModule = await import(userConfigPath);
+  config = { ...(userConfigModule.default || userConfigModule) }; // Handle ES module default export
+
+  // Resolve paths from user config relative to the user's project root (cwd)
+  config.imagesFolder = path.resolve(process.cwd(), config.imagesFolder || '.');
+  config.outputFolder = path.resolve(process.cwd(), config.outputFolder || './output');
+  // outputJson and outputHtml are filenames, not paths to resolve here
+
 } else {
   console.log('No user config found. Loading defaults and adjusting paths for current directory.');
   const defaultConfigModule = await import('./sucker.config.js');
@@ -324,9 +388,10 @@ if (existsSync(userConfigPath)) {
   config.imagesFolder = process.cwd();
   console.log(`  Defaulting imagesFolder to current working directory: ${config.imagesFolder}`);
 
-  // Override outputJson to be in current working directory's 'output/palettes.json'
-  config.outputJson = path.join(process.cwd(), 'output', 'palettes.json');
-  console.log(`  Defaulting outputJson to: ${config.outputJson}`);
+  // Override outputFolder to be in current working directory's 'output'
+  config.outputFolder = path.join(process.cwd(), 'output');
+  console.log(`  Defaulting outputFolder to: ${config.outputFolder}`);
+  // outputJson and outputHtml will use their default filenames within this outputFolder
 }
 
 // Override paletteSize if provided via CLI
@@ -340,9 +405,8 @@ config.imagesFolder = path.isAbsolute(config.imagesFolder)
   ? config.imagesFolder
   : path.resolve(process.cwd(), config.imagesFolder || '.');
 
-config.outputJson = path.isAbsolute(config.outputJson)
-  ? config.outputJson
-  : path.resolve(process.cwd(), config.outputJson || 'output/palettes.json');
+// We don't need to resolve outputJson path here as it's just a filename
+// that will be joined with the outputFolder in the processImages function
 
 // Dynamically set the imagesFolder to the current working directory if running with npx
 if (process.cwd() !== __dirname) {
@@ -372,8 +436,12 @@ if (isMain) {
   (async () => {
     try {
       console.log('Executing processImages...');
-      await processImages();
+      const results = await processImages(); // processImages should return results
       console.log('processImages completed successfully.');
+
+      // HTML report generation is now handled inside processImages()
+      // No need to call generateHtmlReport here
+
     } catch (err) {
       console.error('Error during processImages execution:', err);
     }
