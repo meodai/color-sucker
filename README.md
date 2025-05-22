@@ -109,7 +109,7 @@ This makes it easy to quickly extract palettes from images in any folder without
 
 ## Dependencies
 
-- **[Google Art Palette](https://github.com/google/art-palette)**: Used for palette extraction.
+- **[Google Art Palette](https://github.com/googleartsculture/art-palette)**: Used for palette extraction.
 - **[p-queue](https://www.npmjs.com/package/p-queue)**: Manages parallel processing with a thread pool.
 - **[gif-frames](https://www.npmjs.com/package/gif-frames)**: Extracts frames from GIF files.
 - **[canvas](https://www.npmjs.com/package/canvas)**: Combines GIF frames into a single image.
